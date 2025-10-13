@@ -3,7 +3,7 @@ export default async function handler(req, res) {
     // Extract path after /api/proxy/
     const path = req.url.replace(/^\/api\/proxy\//, "") || "";
 
-    // Mirrors to rotate
+    // Mirrors to rotate per request
     const mirrors = [
       "https://vidsrc-embed.ru",
       "https://vidapi.xyz",
@@ -24,27 +24,20 @@ export default async function handler(req, res) {
       "https://google.com/"
     ];
 
-    let upstream;
-    let lastError;
+    // --- Randomly select one of each per request ---
+    const mirror = mirrors[Math.floor(Math.random() * mirrors.length)];
+    const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
+    const referer = referers[Math.floor(Math.random() * referers.length)];
 
-    // Try mirrors in order until one works
-    for (const base of mirrors) {
-      try {
-        upstream = await fetch(base + "/" + path, {
-          headers: {
-            "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
-            "Referer": referers[Math.floor(Math.random() * referers.length)]
-          }
-        });
-        if (upstream.ok) break;
-      } catch (err) {
-        lastError = err;
+    // Fetch upstream content
+    const upstream = await fetch(mirror + "/" + path, {
+      headers: {
+        "User-Agent": userAgent,
+        "Referer": referer
       }
-    }
+    });
 
-    if (!upstream || !upstream.ok) {
-      throw new Error("All mirrors failed: " + (lastError?.message || ""));
-    }
+    if (!upstream.ok) throw new Error(`Upstream request failed: ${upstream.status}`);
 
     const contentType = upstream.headers.get("content-type") || "";
 
@@ -111,6 +104,7 @@ export default async function handler(req, res) {
       "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-src *; media-src * data: blob:;"
     );
     res.send(html);
+
   } catch (err) {
     console.error("Proxy error:", err);
     res.status(500).json({ error: "Proxy failed", details: err.message });
