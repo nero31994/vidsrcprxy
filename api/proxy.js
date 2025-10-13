@@ -1,33 +1,57 @@
 export default async function handler(req, res) {
   try {
-    const path = req.url.replace(/^\/api\/proxy/, "");
-    const target = `https://vidsrc-embed.ru${path}`;
+    // Extract path after /api/proxy
+    const url = new URL(req.url, `https://${req.headers.host}`);
+    const relativePath = url.pathname.replace(/^\/api\/proxy/, "") || "/";
 
-    const upstream = await fetch(target, {
-      headers: {
-        "user-agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36",
-        referer: "https://vidsrc-embed.ru/",
-      },
-    });
+    // List of mirrors (try one by one)
+    const mirrors = [
+      "https://vidsrc-embed.ru",
+      "https://vidapi.xyz",
+      "https://vidsrc.to",
+    ];
+
+    let upstream, lastError;
+    for (const base of mirrors) {
+      try {
+        const target = base + relativePath + url.search;
+        upstream = await fetch(target, {
+          headers: {
+            "user-agent":
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36",
+            referer: base + "/",
+          },
+        });
+        if (upstream.ok) {
+          console.log(`Fetched from: ${base}`);
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+      }
+    }
+
+    if (!upstream || !upstream.ok) {
+      throw new Error("All sources failed to fetch: " + (lastError?.message || ""));
+    }
 
     const contentType = upstream.headers.get("content-type") || "";
-
     if (!contentType.includes("text/html")) {
+      const buffer = Buffer.from(await upstream.arrayBuffer());
       res.setHeader("access-control-allow-origin", "*");
       res.setHeader("content-type", contentType);
-      const buffer = Buffer.from(await upstream.arrayBuffer());
       return res.status(upstream.status).send(buffer);
     }
 
     let html = await upstream.text();
 
-    // Remove ad scripts
+    // clean ads and popups
     html = html
       .replace(/<script[^>]*>[^<]*(ads|popunder|atob|redirect)[^<]*<\/script>/gi, "")
       .replace(/eval\(atob\([^)]*\)\);?/gi, "")
       .replace(/window\.open\s*=\s*[^;]+;/gi, "window.open = () => null;");
 
+    // inject protection
     const injection = `
       <script>
         (() => {
@@ -42,7 +66,6 @@ export default async function handler(req, res) {
           };
           new MutationObserver(blockAds).observe(document.documentElement, { childList: true, subtree: true });
           window.addEventListener("load", blockAds);
-
           const fixPlayer = () => {
             const p = document.querySelector("iframe, video, #player, .player");
             if (p) Object.assign(p.style, {
@@ -73,6 +96,7 @@ export default async function handler(req, res) {
     );
     res.send(html);
   } catch (err) {
+    console.error("Proxy failed:", err);
     res.status(500).json({ error: "Proxy failed", details: err.message });
   }
 }
