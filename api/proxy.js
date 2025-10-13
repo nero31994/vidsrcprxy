@@ -7,13 +7,7 @@ export default async function handler(req, res) {
     // List of mirrors (try one by one)
     const mirrors = [
       "https://vidsrc-embed.ru",
-      "https://vidsrcme.ru",
-"https://vidsrcme.su",
-"https://vidsrc-me.ru",
-"https://vidsrc-me.su",
-"https://vidsrc-embed.ru",
-"https://vidsrc-embed.su",
-"https://vsrc.su",
+
     ];
 
     let upstream, lastError;
