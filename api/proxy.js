@@ -11,7 +11,7 @@ export default async function handler(req, res) {
       "https://vidsrc-me.ru",
       "https://vidsrc-me.su",
       "https://vidsrc-embed.su",
-      "https://vsrc.su"
+      
     ];
 
     // User-agents rotation
@@ -29,7 +29,7 @@ export default async function handler(req, res) {
       "https://vidsrc-me.ru",
       "https://vidsrc-me.su",
       "https://vidsrc-embed.su",
-      "https://vsrc.su"
+     
     ];
 
     // --- Randomly select one of each per request ---
