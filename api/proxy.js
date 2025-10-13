@@ -7,12 +7,11 @@ export default async function handler(req, res) {
     const mirrors = [
       "https://vidsrc-embed.ru",
       "https://vidsrcme.ru",
-"https://vidsrcme.su",
-"https://vidsrc-me.ru,
-"https://vidsrc-me.su,
-"https://vidsrc-embed.ru,
-"https://vidsrc-embed.su,
-"https://vsrc.su"
+      "https://vidsrcme.su",
+      "https://vidsrc-me.ru",
+      "https://vidsrc-me.su",
+      "https://vidsrc-embed.su",
+      "https://vsrc.su"
     ];
 
     // User-agents rotation
@@ -26,12 +25,11 @@ export default async function handler(req, res) {
     const referers = [
       "https://vidsrc-embed.ru",
       "https://vidsrcme.ru",
-"https://vidsrcme.su",
-"https://vidsrc-me.ru,
-"https://vidsrc-me.su,
-"https://vidsrc-embed.ru,
-"https://vidsrc-embed.su,
-"https://vsrc.su"
+      "https://vidsrcme.su",
+      "https://vidsrc-me.ru",
+      "https://vidsrc-me.su",
+      "https://vidsrc-embed.su",
+      "https://vsrc.su"
     ];
 
     // --- Randomly select one of each per request ---
