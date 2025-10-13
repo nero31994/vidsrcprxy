@@ -1,101 +1,66 @@
 export default async function handler(req, res) {
   try {
-    // Extract path after /api/proxy
-    const url = new URL(req.url, `https://${req.headers.host}`);
-    const relativePath = url.pathname.replace(/^\/api\/proxy/, "") || "/";
+    const path = req.url.replace(/^\/api\/proxy\//, "") || "";
 
-    // List of mirrors (try one by one)
+    // Mirrors
     const mirrors = [
       "https://vidsrc-embed.ru",
-
+      "https://vidapi.xyz",
+      "https://vidsrc.to"
     ];
 
-    let upstream, lastError;
+    const userAgents = [
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/127.0 Safari/537.36",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 Safari/605.1.15",
+      "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 Chrome/127.0 Mobile Safari/537.36"
+    ];
+
+    const referers = [
+      "https://vidsrc.to/",
+      "https://vidsrc-embed.ru/",
+      "https://google.com/"
+    ];
+
+    let html;
     for (const base of mirrors) {
       try {
-        const target = base + relativePath + url.search;
-        upstream = await fetch(target, {
+        const upstream = await fetch(base + "/" + path, {
           headers: {
-            "user-agent":
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0 Safari/537.36",
-            referer: base + "/",
-          },
+            "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
+            "Referer": referers[Math.floor(Math.random() * referers.length)]
+          }
         });
-        if (upstream.ok) {
-          console.log(`Fetched from: ${base}`);
-          break;
+        if (!upstream.ok) continue;
+
+        html = await upstream.text();
+
+        // Try to extract M3U8 or MPD URL from page
+        const m3u8Match = html.match(/(https?:\/\/[^\s"'<>]+\.m3u8[^\s"'<>]*)/i);
+        const mpdMatch = html.match(/(https?:\/\/[^\s"'<>]+\.mpd[^\s"'<>]*)/i);
+        const videoUrl = m3u8Match?.[1] || mpdMatch?.[1];
+
+        if (videoUrl) {
+          // Fetch video manifest
+          const videoResp = await fetch(videoUrl, {
+            headers: {
+              "User-Agent": userAgents[Math.floor(Math.random() * userAgents.length)],
+              "Referer": base + "/"
+            }
+          });
+          const buffer = Buffer.from(await videoResp.arrayBuffer());
+          res.setHeader("access-control-allow-origin", "*");
+          res.setHeader("content-type", videoResp.headers.get("content-type") || "application/vnd.apple.mpegurl");
+          return res.status(videoResp.status).send(buffer);
         }
       } catch (err) {
-        lastError = err;
+        console.error("Mirror failed:", base, err.message);
+        continue;
       }
     }
 
-    if (!upstream || !upstream.ok) {
-      throw new Error("All sources failed to fetch: " + (lastError?.message || ""));
-    }
-
-    const contentType = upstream.headers.get("content-type") || "";
-    if (!contentType.includes("text/html")) {
-      const buffer = Buffer.from(await upstream.arrayBuffer());
-      res.setHeader("access-control-allow-origin", "*");
-      res.setHeader("content-type", contentType);
-      return res.status(upstream.status).send(buffer);
-    }
-
-    let html = await upstream.text();
-
-    // clean ads and popups
-    html = html
-      .replace(/<script[^>]*>[^<]*(ads|popunder|atob|redirect)[^<]*<\/script>/gi, "")
-      .replace(/eval\(atob\([^)]*\)\);?/gi, "")
-      .replace(/window\.open\s*=\s*[^;]+;/gi, "window.open = () => null;");
-
-    // inject protection
-    const injection = `
-      <script>
-        (() => {
-          const blockAds = () => {
-            document.querySelectorAll("script").forEach(s => {
-              if (/atob|ads|popunder|redirect/i.test(s.innerHTML)) s.remove();
-            });
-            window.open = () => null;
-            document.querySelectorAll("a").forEach(a => {
-              if (/ads?|sponsor|click|redirect/i.test(a.href)) a.removeAttribute("href");
-            });
-          };
-          new MutationObserver(blockAds).observe(document.documentElement, { childList: true, subtree: true });
-          window.addEventListener("load", blockAds);
-          const fixPlayer = () => {
-            const p = document.querySelector("iframe, video, #player, .player");
-            if (p) Object.assign(p.style, {
-              width: "100vw", height: "100vh", position: "fixed",
-              top: "0", left: "0", zIndex: "9999"
-            });
-          };
-          new MutationObserver(fixPlayer).observe(document.body, { childList: true, subtree: true });
-          window.addEventListener("load", fixPlayer);
-        })();
-      </script>
-      <style>
-        html,body {margin:0;padding:0;background:#000;overflow:hidden;height:100vh;}
-        iframe,video,#player,.player {
-          width:100vw!important;height:100vh!important;
-          border:none!important;display:block!important;
-        }
-      </style>
-    `;
-    html = html.replace(/<\/body>/i, `${injection}</body>`);
-
-    res.status(upstream.status);
-    res.setHeader("content-type", "text/html; charset=utf-8");
-    res.setHeader("access-control-allow-origin", "*");
-    res.setHeader(
-      "content-security-policy",
-      "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-src *; media-src * data: blob:;"
-    );
-    res.send(html);
+    res.status(404).json({ error: "Video URL not found in any mirror." });
   } catch (err) {
-    console.error("Proxy failed:", err);
+    console.error("Proxy error:", err);
     res.status(500).json({ error: "Proxy failed", details: err.message });
   }
 }
