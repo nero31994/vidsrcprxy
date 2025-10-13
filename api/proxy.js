@@ -5,11 +5,7 @@ export default async function handler(req, res) {
 
     // Mirrors to rotate per request
     const mirrors = [
-      "https://vidsrc-embed.ru",
-      "https://vidsrcme.ru",
-      "https://vidsrcme.su",
-      "https://vidsrc-me.ru",
-      "https://vidsrc-me.su",
+      "https://vidsrc-embed.ru",    
       "https://vidsrc-embed.su",
       
     ];
@@ -23,11 +19,7 @@ export default async function handler(req, res) {
 
     // Referer rotation
     const referers = [
-      "https://vidsrc-embed.ru",
-      "https://vidsrcme.ru",
-      "https://vidsrcme.su",
-      "https://vidsrc-me.ru",
-      "https://vidsrc-me.su",
+      "https://vidsrc-embed.ru",      
       "https://vidsrc-embed.su",
      
     ];
