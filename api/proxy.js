@@ -6,8 +6,13 @@ export default async function handler(req, res) {
     // Mirrors to rotate per request
     const mirrors = [
       "https://vidsrc-embed.ru",
-      "https://vidapi.xyz",
-      "https://vidsrc.to"
+      "https://vidsrcme.ru",
+"https://vidsrcme.su",
+"https://vidsrc-me.ru,
+"https://vidsrc-me.su,
+"https://vidsrc-embed.ru,
+"https://vidsrc-embed.su,
+"https://vsrc.su"
     ];
 
     // User-agents rotation
@@ -19,9 +24,14 @@ export default async function handler(req, res) {
 
     // Referer rotation
     const referers = [
-      "https://vidsrc.to/",
-      "https://vidsrc-embed.ru/",
-      "https://google.com/"
+      "https://vidsrc-embed.ru",
+      "https://vidsrcme.ru",
+"https://vidsrcme.su",
+"https://vidsrc-me.ru,
+"https://vidsrc-me.su,
+"https://vidsrc-embed.ru,
+"https://vidsrc-embed.su,
+"https://vsrc.su"
     ];
 
     // --- Randomly select one of each per request ---
