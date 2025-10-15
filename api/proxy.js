@@ -7,7 +7,7 @@ export default async function handler(req, res) {
     const mirrors = [
       "https://vidsrc-embed.ru",
       "https://vidsrc-embed.su",
-      "https://vidsrcme.ru"
+      
     ];
 
     const userAgents = [
@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     const referers = [
       "https://vidsrc-embed.ru",
       "https://vidsrc-embed.su",
-      "https://vidsrcme.ru"
+
     ];
 
     // Get mirror sequentially and cycle through them
