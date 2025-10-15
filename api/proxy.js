@@ -4,74 +4,93 @@ export default async function handler(req, res) {
   try {
     const path = req.url.replace(/^\/api\/proxy\//, "") || "";
 
-    // Rotating mirrors (edit freely)
+    // Mirror rotation
     const mirrors = [
       "https://vidsrc-embed.ru",
       "https://vidsrc.to",
       "https://vidapi.xyz",
     ];
 
-    // Function to fetch from mirror
-    async function fetchFromMirror(mirror) {
-      const response = await fetch(`${mirror}/${path}`, {
-        headers: {
-          "User-Agent":
-            req.headers["user-agent"] ||
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-          "Referer": mirror,
-          "Origin": mirror,
-          "Accept":
-            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        },
-      });
-      const text = await response.text();
-      return { status: response.status, headers: response.headers, body: text };
-    }
+    // Rotate mirrors sequentially
+    const mirror = mirrors[currentMirrorIndex];
+    currentMirrorIndex = (currentMirrorIndex + 1) % mirrors.length;
 
-    let success = false;
-    let finalResponse = null;
+    const upstream = await fetch(`${mirror}/${path}`, {
+      headers: {
+        "User-Agent":
+          req.headers["user-agent"] ||
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        "Referer": mirror,
+        "Origin": mirror,
+        "Accept":
+          "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      },
+    });
 
-    // Try each mirror until a working one is found
-    for (let i = 0; i < mirrors.length; i++) {
-      const mirror = mirrors[currentMirrorIndex];
-      currentMirrorIndex = (currentMirrorIndex + 1) % mirrors.length;
+    let html = await upstream.text();
 
-      const result = await fetchFromMirror(mirror);
+    // --- Remove known ad scripts & histats ---
+    html = html
+      .replace(/<script[^>]*histats[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<iframe[^>]*histats[^>]*>[\s\S]*?<\/iframe>/gi, "")
+      .replace(/<script[^>]*adsbygoogle[^>]*>[\s\S]*?<\/script>/gi, "")
+      .replace(/<script[^>]*popunder[^>]*>[\s\S]*?<\/script>/gi, "");
 
-      // Check if it contains a video iframe or embed script
-      if (
-        result.body.includes("<iframe") ||
-        result.body.includes("player") ||
-        result.body.includes("videojs") ||
-        result.body.includes("jwplayer")
-      ) {
-        success = true;
-        finalResponse = result;
-        break;
-      }
+    // --- Inject popup/redirect blocker ---
+    const injection = `
+      <script>
+        // Stop popup layers & redirect hijacks
+        (() => {
+          const originalOpen = window.open;
+          window.open = (...args) => {
+            console.log("Blocked popup:", args[0]);
+            return null;
+          };
 
-      // Skip if it’s just tracking or blank page
-      if (
-        result.body.includes("histats") ||
-        result.body.trim().length < 300
-      ) {
-        continue;
-      }
-    }
+          const stopRedirect = () => {
+            const forbidden = ["onclick", "onbeforeunload", "onunload"];
+            forbidden.forEach(ev => window[ev] = null);
+            document.addEventListener("click", e => {
+              const t = e.target.closest("a,button");
+              if (t && /ads|click|sponsor/i.test(t.href || "")) {
+                e.preventDefault();
+                console.log("Blocked redirect:", t.href);
+              }
+            }, true);
+          };
+          stopRedirect();
 
-    if (!success || !finalResponse) {
-      return res
-        .status(404)
-        .json({ error: "No working mirror found for this video." });
-    }
+          // Disable window.location hijack
+          Object.defineProperty(window, 'location', {
+            value: window.location,
+            writable: false,
+          });
 
-    res.setHeader(
-      "Content-Type",
-      finalResponse.headers.get("content-type") || "text/html"
-    );
+          console.log("Ad & popup blocker active ✅");
+        })();
+      </script>
+      <style>
+        body { background:#000; margin:0; padding:0; overflow:hidden; }
+        iframe, video, .player, #player {
+          width:100vw!important;
+          height:100vh!important;
+          border:0;
+        }
+      </style>
+    `;
+
+    html = html.replace(/<\/body>/i, injection + "</body>");
+
+    // --- Response headers ---
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(finalResponse.status).send(finalResponse.body);
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-src *; media-src * data: blob:; object-src 'none';"
+    );
+    res.status(200).send(html);
   } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 }
