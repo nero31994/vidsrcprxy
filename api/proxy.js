@@ -7,7 +7,7 @@ export default async function handler(req, res) {
     const mirrors = [
       "https://vidsrc-embed.ru",    
       "https://vidsrc-embed.su",
-      "https://vidsrcme.su",
+      "https://vidsrcme.ru",
       
     ];
 
@@ -22,7 +22,7 @@ export default async function handler(req, res) {
     const referers = [
       "https://vidsrc-embed.ru",      
       "https://vidsrc-embed.su",
-      "https://vidsrcme.su",
+      "https://vidsrcme.ru",
     ];
 
     // --- Randomly select one of each per request ---
