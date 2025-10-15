@@ -1,48 +1,47 @@
+let currentMirrorIndex = 0; // Global counter to rotate mirrors
+
 export default async function handler(req, res) {
   try {
-    // Extract path after /api/proxy/
     const path = req.url.replace(/^\/api\/proxy\//, "") || "";
 
-    // Mirrors to rotate per request
     const mirrors = [
-      "https://vidsrc-embed.ru",    
+      "https://vidsrc-embed.ru",
       "https://vidsrc-embed.su",
-      "https://vidsrcme.ru",
-      
+      "https://vidsrcme.ru"
     ];
 
-    // User-agents rotation
     const userAgents = [
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/127.0 Safari/537.36",
       "Mozilla/5.0 (Macintosh; Intel Mac OS X 13_6) AppleWebKit/605.1.15 Safari/605.1.15",
       "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 Chrome/127.0 Mobile Safari/537.36"
     ];
 
-    // Referer rotation
     const referers = [
-      "https://vidsrc-embed.ru",      
+      "https://vidsrc-embed.ru",
       "https://vidsrc-embed.su",
-      "https://vidsrcme.ru",
+      "https://vidsrcme.ru"
     ];
 
-    // --- Randomly select one of each per request ---
-    const mirror = mirrors[Math.floor(Math.random() * mirrors.length)];
-    const userAgent = userAgents[Math.floor(Math.random() * userAgents.length)];
-    const referer = referers[Math.floor(Math.random() * referers.length)];
+    // Get mirror sequentially and cycle through them
+    const mirror = mirrors[currentMirrorIndex];
+    const referer = referers[currentMirrorIndex];
+    const userAgent = userAgents[currentMirrorIndex % userAgents.length];
 
-    // Fetch upstream content
-    const upstream = await fetch(mirror + "/" + path, {
+    // Increment index and wrap around when reaching the end
+    currentMirrorIndex = (currentMirrorIndex + 1) % mirrors.length;
+
+    const upstream = await fetch(`${mirror}/${path}`, {
       headers: {
         "User-Agent": userAgent,
         "Referer": referer
       }
     });
 
-    if (!upstream.ok) throw new Error(`Upstream request failed: ${upstream.status}`);
+    if (!upstream.ok)
+      throw new Error(`Upstream request failed: ${upstream.status}`);
 
     const contentType = upstream.headers.get("content-type") || "";
 
-    // Pass-through for non-HTML
     if (!contentType.includes("text/html")) {
       const buffer = Buffer.from(await upstream.arrayBuffer());
       res.setHeader("access-control-allow-origin", "*");
@@ -50,15 +49,16 @@ export default async function handler(req, res) {
       return res.status(upstream.status).send(buffer);
     }
 
-    // HTML content: remove popups & ads
     let html = await upstream.text();
+
+    // Strip ads/popups
     html = html
       .replace(/window\.open\(.*?\);?/g, "")
       .replace(/<script[^>]*>[^<]*(popup|click|ad|redirect|atob)[^<]*<\/script>/gi, "")
       .replace(/eval\(atob\(.*?\)\);?/gi, "")
       .replace(/onbeforeunload=.*?['"]/gi, "");
 
-    // Inject anti-popup & player fullscreen fix
+    // Inject safe fullscreen and ad-blocking
     const injection = `
       <script>
         (() => {
@@ -96,7 +96,6 @@ export default async function handler(req, res) {
     `;
     html = html.replace(/<\/body>/i, `${injection}</body>`);
 
-    // Send response
     res.status(upstream.status);
     res.setHeader("content-type", "text/html; charset=utf-8");
     res.setHeader("access-control-allow-origin", "*");
