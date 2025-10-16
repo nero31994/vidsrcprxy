@@ -1,126 +1,143 @@
+let currentMirrorIndex = 0;
+
 export default async function handler(req, res) {
   try {
+    const path = req.url.replace(/^\/api\/proxy\//, "") || "";
+
+    // Rotating mirrors
     const mirrors = [
-      "https://vidsrc-embed.ru",
-      "https://vidsrc-embed.su",
       "https://vidapi.xyz",
+      "https://vidsrc-embed.su",
+      "https://vidapi.xyz"
     ];
 
-    const path = req.url.replace(/^\/api\/proxy\//, "");
-    const target = mirrors[0] + "/" + path;
+    const mirror = mirrors[currentMirrorIndex];
+    currentMirrorIndex = (currentMirrorIndex + 1) % mirrors.length;
 
+    const target = `${mirror}/${path}`;
     const upstream = await fetch(target, {
       headers: {
-        "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        "Referer": "https://vidsrc-embed.ru/",
-        "Accept": "text/html",
+        "User-Agent":
+          req.headers["user-agent"] ||
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        Referer: mirror,
+        Origin: mirror,
       },
     });
 
+    const contentType = upstream.headers.get("content-type") || "";
+    if (!contentType.includes("text/html")) {
+      const buf = await upstream.arrayBuffer();
+      res.setHeader("Access-Control-Allow-Origin", "*");
+      res.status(upstream.status).send(Buffer.from(buf));
+      return;
+    }
+
     let html = await upstream.text();
 
-    // 🧹 Remove popup & ad scripts
-    html = html
-      .replace(/<script[^>]*histats[^>]*<\/script>/gi, "")
-      .replace(/<script[^>]*popunder[^>]*<\/script>/gi, "")
-      .replace(/<script[^>]*ads[^>]*<\/script>/gi, "")
-      .replace(/window\.open\s*\(/gi, "//blocked(")
-      .replace(/on(click|mousedown|mouseup)="[^"]*"/gi, "")
-      .replace(/location\.href\s*=/gi, "//blockedHref=")
-      .replace(/intent:\/\//gi, "#safe://");
-
-    // 🎬 Force full player layout
-    const playerCSS = `
-      <style>
-        html, body {
-          margin: 0 !important;
-          padding: 0 !important;
-          background: #000 !important;
-          height: 100% !important;
-          width: 100% !important;
-          overflow: hidden !important;
-        }
-        iframe, video, #player, .video-js, .jwplayer, .plyr {
-          width: 100% !important;
-          height: 100% !important;
-          max-width: 100vw !important;
-          max-height: 100vh !important;
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          object-fit: cover !important;
-          z-index: 10 !important;
-        }
-      </style>
-    `;
-
-    // 🛡 SafeLock overlay + reminder
-    const safeLock = `
-      <style>
-        #safeLock {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.25);
-          z-index: 9999;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          text-align: center;
-          color: #fff;
-          font-family: system-ui, sans-serif;
-          font-size: 16px;
-          backdrop-filter: blur(4px);
-          transition: opacity 1s ease;
-        }
-        #safeLock.hidden {
-          opacity: 0;
-          pointer-events: none;
-        }
-        #safeLock span {
-          background: rgba(0,0,0,0.6);
-          padding: 12px 20px;
-          border-radius: 10px;
-          box-shadow: 0 0 20px rgba(255,255,255,0.1);
-        }
-      </style>
+    // Inject strong adblock + auto-restore player logic
+    const injection = `
       <script>
-        const safeLock = document.createElement('div');
-        safeLock.id = 'safeLock';
-        safeLock.innerHTML = '<span>⚠️ Ads will appear if you tap the player — please wait...</span>';
-        document.body.appendChild(safeLock);
+        (() => {
+          const blocked = /intent:|market:|histats|sponsor|pop|redirect/i;
 
-        // Double-tap manual unlock
-        let tapCount = 0;
-        safeLock.addEventListener('click', () => {
-          tapCount++;
-          if (tapCount >= 2) safeLock.classList.add('hidden');
-        });
+          // 🧩 Prevent popup and intent redirects
+          window.open = () => null;
+          document.addEventListener('click', e => {
+            const t = e.target.closest('a,button');
+            if (t && t.href && blocked.test(t.href)) {
+              e.preventDefault(); e.stopImmediatePropagation();
+              console.log('🚫 Blocked redirect:', t.href);
+            }
+          }, true);
 
-        // Auto-hide after video starts
-        const fadeOnPlay = () => {
-          const vid = document.querySelector('video');
-          const iframe = document.querySelector('iframe');
-          if (vid) {
-            vid.addEventListener('play', () => {
-              setTimeout(() => safeLock.classList.add('hidden'), 3000);
+          // 🧠 Block dynamically inserted intent links
+          new MutationObserver(mutations => {
+            mutations.forEach(m => m.addedNodes.forEach(n => {
+              if (n.nodeType === 1) {
+                const links = n.querySelectorAll('a[href]');
+                links.forEach(a => {
+                  if (blocked.test(a.href)) a.removeAttribute('href');
+                });
+              }
+            }));
+          }).observe(document.documentElement, { childList: true, subtree: true });
+
+          // 🧩 Keep the player fixed and restore if replaced by ads
+          const restorePlayer = () => {
+            const validSelectors = ['iframe', 'video', '#player', '.player'];
+            let player = document.querySelector(validSelectors.join(','));
+            if (!player) {
+              console.log('🎥 Player missing — restoring...');
+              // Try to find any old iframe (if replaced)
+              const iframes = document.querySelectorAll('iframe');
+              for (const frame of iframes) {
+                if (!blocked.test(frame.src)) {
+                  frame.style = 'width:100vw;height:100vh;position:fixed;top:0;left:0;z-index:9999;border:none;';
+                  document.body.innerHTML = '';
+                  document.body.appendChild(frame);
+                  return;
+                }
+              }
+            } else {
+              Object.assign(player.style, {
+                width: '100vw',
+                height: '100vh',
+                position: 'fixed',
+                top: '0',
+                left: '0',
+                zIndex: '9999'
+              });
+            }
+          };
+
+          // 🔄 Observe and auto-restore
+          new MutationObserver(() => restorePlayer())
+            .observe(document.body, { childList: true, subtree: true });
+          window.addEventListener('load', restorePlayer);
+
+          // 🧹 Block JS redirect tricks
+          const stopRedirects = () => {
+            const orig = window.location;
+            ['assign', 'replace'].forEach(fn => {
+              try {
+                window.location[fn] = new Proxy(window.location[fn], {
+                  apply(t, thisArg, args) {
+                    if (args[0] && blocked.test(args[0])) {
+                      console.log('🚫 Blocked JS redirect:', args[0]);
+                      return;
+                    }
+                    return Reflect.apply(t, thisArg, args);
+                  }
+                });
+              } catch (e) {}
             });
-          } else if (iframe) {
-            setTimeout(() => safeLock.classList.add('hidden'), 5000);
-          }
-        };
-
-        window.addEventListener('load', fadeOnPlay);
-        new MutationObserver(fadeOnPlay).observe(document.body, { childList: true, subtree: true });
+          };
+          stopRedirects();
+        })();
       </script>
+      <style>
+        html,body {
+          margin:0; padding:0; background:#000; overflow:hidden; height:100vh;
+        }
+        iframe, video, #player, .player {
+          width:100vw !important; height:100vh !important;
+          border:none !important; display:block !important;
+        }
+      </style>
     `;
 
-    html = html.replace("</head>", playerCSS + "</head>");
-    html = html.replace("</body>", safeLock + "</body>");
+    html = html.replace(/<\/body>/i, `${injection}</body>`);
 
-    res.setHeader("Content-Type", "text/html");
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Access-Control-Allow-Origin", "*");
-    res.status(200).send(html);
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; frame-src *; media-src * data: blob:;"
+    );
+    res.status(upstream.status).send(html);
   } catch (err) {
+    console.error("Proxy error:", err);
     res.status(500).json({ error: "Proxy failed", details: err.message });
   }
 }
