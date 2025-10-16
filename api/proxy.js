@@ -6,7 +6,7 @@ export default async function handler(req, res) {
 
     // Rotating mirrors
     const mirrors = [
-      "https://vidapi.xyz",
+      "https://autoembed.pro",
       
     ];
 
