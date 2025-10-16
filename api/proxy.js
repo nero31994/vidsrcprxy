@@ -3,12 +3,15 @@ let currentMirrorIndex = 0;
 export default async function handler(req, res) {
   try {
     const path = req.url.replace(/^\/api\/proxy\//, "") || "";
+
+    // Rotating mirrors
     const mirrors = [
       "https://vidsrc-embed.ru",
-      "https://vidsrc.to",
-      "https://vidapi.xyz",
+      "https://vidsrc-embed.su",
+      "https://vidapi.xyz"
     ];
 
+    // Cycle mirrors each request
     const mirror = mirrors[currentMirrorIndex];
     currentMirrorIndex = (currentMirrorIndex + 1) % mirrors.length;
 
@@ -27,90 +30,127 @@ export default async function handler(req, res) {
     if (!contentType.includes("text/html")) {
       const buf = await upstream.arrayBuffer();
       res.setHeader("Access-Control-Allow-Origin", "*");
-      res.setHeader("X-Frame-Options", "ALLOWALL");
       res.status(upstream.status).send(Buffer.from(buf));
       return;
     }
 
     let html = await upstream.text();
 
-    // 🔒 Inject advanced anti-ad / anti-intent script
+    // Inject safe ad-block, popup-block and overlay protection
     const injection = `
       <script>
         (() => {
-          // Disable popup/redirect attempts
-          window.open = () => null;
-          const blockedProtocols = /^(intent|market):/i;
+          const blocked = /intent:|market:|histats|sponsor|pop|redirect|ads/i;
 
-          // Intercept all click events (including video tap)
+          // 🧩 Prevent popup, intent and ad redirects
+          window.open = () => null;
           document.addEventListener('click', e => {
-            const target = e.target.closest('a, button, div, span');
-            if (target) {
-              const href = target.getAttribute('href');
-              if (href && blockedProtocols.test(href)) {
-                e.stopImmediatePropagation();
-                e.preventDefault();
-                console.log('🚫 Intent redirect blocked:', href);
-                return false;
-              }
+            const t = e.target.closest('a,button');
+            if (t && t.href && blocked.test(t.href)) {
+              e.preventDefault(); e.stopImmediatePropagation();
+              console.log('🚫 Blocked redirect:', t.href);
             }
           }, true);
 
-          // Prevent dynamically added intent links
+          // 🧠 Remove dynamically inserted ad links
           new MutationObserver(mutations => {
-            mutations.forEach(m => {
-              m.addedNodes.forEach(node => {
-                if (node.nodeType === 1) {
-                  const links = node.querySelectorAll('a[href]');
-                  links.forEach(a => {
-                    if (blockedProtocols.test(a.href)) {
-                      a.removeAttribute('href');
-                      console.log('Removed intent link:', a);
-                    }
-                  });
-                }
-              });
-            });
+            mutations.forEach(m => m.addedNodes.forEach(n => {
+              if (n.nodeType === 1) {
+                n.querySelectorAll('a[href]').forEach(a => {
+                  if (blocked.test(a.href)) a.removeAttribute('href');
+                });
+              }
+            }));
           }).observe(document.documentElement, { childList: true, subtree: true });
 
-          // Block location redirects
-          ['assign','replace'].forEach(fn => {
-            try {
-              window.location[fn] = new Proxy(window.location[fn], {
-                apply(t, thisArg, args) {
-                  if (args[0] && blockedProtocols.test(args[0])) {
-                    console.log('🚫 Redirect blocked:', args[0]);
-                    return;
-                  }
-                  return Reflect.apply(t, thisArg, args);
+          // 🧱 Safe tap overlay (convert accidental ad clicks into pause/play)
+          const createSafeOverlay = () => {
+            let overlay = document.getElementById('safeTapOverlay');
+            if (!overlay) {
+              overlay = document.createElement('div');
+              overlay.id = 'safeTapOverlay';
+              Object.assign(overlay.style, {
+                position: 'fixed',
+                inset: '0',
+                zIndex: '999999',
+                background: 'transparent',
+                cursor: 'pointer'
+              });
+              overlay.addEventListener('click', () => {
+                const v = document.querySelector('video');
+                if (v) {
+                  if (v.paused) v.play();
+                  else v.pause();
                 }
               });
-            } catch(e){}
-          });
+              document.body.appendChild(overlay);
+            }
+          };
 
-          // Make sure player stays full and centered
-          const fixPlayer = () => {
-            const p = document.querySelector('iframe, video, #player, .player');
-            if (p) Object.assign(p.style, {
-              width: '100vw',
-              height: '100vh',
-              position: 'fixed',
-              top: '0',
-              left: '0',
-              zIndex: '9999'
+          // 🎥 Keep player fullscreen and restore if replaced
+          const restorePlayer = () => {
+            const validSelectors = ['iframe', 'video', '#player', '.player'];
+            let player = document.querySelector(validSelectors.join(','));
+            if (!player) {
+              console.log('🎬 Restoring player...');
+              const iframes = document.querySelectorAll('iframe');
+              for (const frame of iframes) {
+                if (!blocked.test(frame.src)) {
+                  frame.style = 'width:100vw;height:100vh;position:fixed;top:0;left:0;z-index:9999;border:none;';
+                  document.body.innerHTML = '';
+                  document.body.appendChild(frame);
+                  createSafeOverlay();
+                  return;
+                }
+              }
+            } else {
+              Object.assign(player.style, {
+                width: '100vw',
+                height: '100vh',
+                position: 'fixed',
+                top: '0',
+                left: '0',
+                zIndex: '9999'
+              });
+              createSafeOverlay();
+            }
+          };
+
+          new MutationObserver(() => restorePlayer())
+            .observe(document.body, { childList: true, subtree: true });
+          window.addEventListener('load', restorePlayer);
+
+          // 🧹 Prevent JS redirects (location.replace/assign)
+          const stopRedirects = () => {
+            ['assign','replace'].forEach(fn => {
+              try {
+                const orig = window.location[fn].bind(window.location);
+                window.location[fn] = (url) => {
+                  if (url && blocked.test(url)) {
+                    console.log('🚫 Blocked JS redirect:', url);
+                    return;
+                  }
+                  return orig(url);
+                };
+              } catch {}
             });
           };
-          new MutationObserver(fixPlayer).observe(document.body, { childList: true, subtree: true });
-          window.addEventListener('load', fixPlayer);
+          stopRedirects();
         })();
       </script>
       <style>
-        html,body{margin:0;padding:0;background:#000;overflow:hidden;height:100vh;}
-        iframe,video,#player,.player{width:100vw!important;height:100vh!important;border:none!important;}
+        html,body {
+          margin:0; padding:0; background:#000; overflow:hidden; height:100vh;
+        }
+        iframe, video, #player, .player {
+          width:100vw !important;
+          height:100vh !important;
+          border:none !important;
+          display:block !important;
+        }
       </style>
     `;
-
-    html = html.replace(/<\/body>/i, `${injection}</body>`);
+    html = html.replace(/<\/body>/i, \`\${injection}</body>\`);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Access-Control-Allow-Origin", "*");
