@@ -11,7 +11,6 @@ export default async function handler(req, res) {
       "https://vidapi.xyz"
     ];
 
-    // Cycle mirrors each request
     const mirror = mirrors[currentMirrorIndex];
     currentMirrorIndex = (currentMirrorIndex + 1) % mirrors.length;
 
@@ -36,13 +35,13 @@ export default async function handler(req, res) {
 
     let html = await upstream.text();
 
-    // Inject safe ad-block, popup-block and overlay protection
+    // Inject strong adblock + auto-restore player logic
     const injection = `
       <script>
         (() => {
-          const blocked = /intent:|market:|histats|sponsor|pop|redirect|ads/i;
+          const blocked = /intent:|market:|histats|sponsor|pop|redirect/i;
 
-          // 🧩 Prevent popup, intent and ad redirects
+          // 🧩 Prevent popup and intent redirects
           window.open = () => null;
           document.addEventListener('click', e => {
             const t = e.target.closest('a,button');
@@ -52,54 +51,31 @@ export default async function handler(req, res) {
             }
           }, true);
 
-          // 🧠 Remove dynamically inserted ad links
+          // 🧠 Block dynamically inserted intent links
           new MutationObserver(mutations => {
             mutations.forEach(m => m.addedNodes.forEach(n => {
               if (n.nodeType === 1) {
-                n.querySelectorAll('a[href]').forEach(a => {
+                const links = n.querySelectorAll('a[href]');
+                links.forEach(a => {
                   if (blocked.test(a.href)) a.removeAttribute('href');
                 });
               }
             }));
           }).observe(document.documentElement, { childList: true, subtree: true });
 
-          // 🧱 Safe tap overlay (convert accidental ad clicks into pause/play)
-          const createSafeOverlay = () => {
-            let overlay = document.getElementById('safeTapOverlay');
-            if (!overlay) {
-              overlay = document.createElement('div');
-              overlay.id = 'safeTapOverlay';
-              Object.assign(overlay.style, {
-                position: 'fixed',
-                inset: '0',
-                zIndex: '999999',
-                background: 'transparent',
-                cursor: 'pointer'
-              });
-              overlay.addEventListener('click', () => {
-                const v = document.querySelector('video');
-                if (v) {
-                  if (v.paused) v.play();
-                  else v.pause();
-                }
-              });
-              document.body.appendChild(overlay);
-            }
-          };
-
-          // 🎥 Keep player fullscreen and restore if replaced
+          // 🧩 Keep the player fixed and restore if replaced by ads
           const restorePlayer = () => {
             const validSelectors = ['iframe', 'video', '#player', '.player'];
             let player = document.querySelector(validSelectors.join(','));
             if (!player) {
-              console.log('🎬 Restoring player...');
+              console.log('🎥 Player missing — restoring...');
+              // Try to find any old iframe (if replaced)
               const iframes = document.querySelectorAll('iframe');
               for (const frame of iframes) {
                 if (!blocked.test(frame.src)) {
                   frame.style = 'width:100vw;height:100vh;position:fixed;top:0;left:0;z-index:9999;border:none;';
                   document.body.innerHTML = '';
                   document.body.appendChild(frame);
-                  createSafeOverlay();
                   return;
                 }
               }
@@ -112,27 +88,29 @@ export default async function handler(req, res) {
                 left: '0',
                 zIndex: '9999'
               });
-              createSafeOverlay();
             }
           };
 
+          // 🔄 Observe and auto-restore
           new MutationObserver(() => restorePlayer())
             .observe(document.body, { childList: true, subtree: true });
           window.addEventListener('load', restorePlayer);
 
-          // 🧹 Prevent JS redirects (location.replace/assign)
+          // 🧹 Block JS redirect tricks
           const stopRedirects = () => {
-            ['assign','replace'].forEach(fn => {
+            const orig = window.location;
+            ['assign', 'replace'].forEach(fn => {
               try {
-                const orig = window.location[fn].bind(window.location);
-                window.location[fn] = (url) => {
-                  if (url && blocked.test(url)) {
-                    console.log('🚫 Blocked JS redirect:', url);
-                    return;
+                window.location[fn] = new Proxy(window.location[fn], {
+                  apply(t, thisArg, args) {
+                    if (args[0] && blocked.test(args[0])) {
+                      console.log('🚫 Blocked JS redirect:', args[0]);
+                      return;
+                    }
+                    return Reflect.apply(t, thisArg, args);
                   }
-                  return orig(url);
-                };
-              } catch {}
+                });
+              } catch (e) {}
             });
           };
           stopRedirects();
@@ -143,14 +121,13 @@ export default async function handler(req, res) {
           margin:0; padding:0; background:#000; overflow:hidden; height:100vh;
         }
         iframe, video, #player, .player {
-          width:100vw !important;
-          height:100vh !important;
-          border:none !important;
-          display:block !important;
+          width:100vw !important; height:100vh !important;
+          border:none !important; display:block !important;
         }
       </style>
     `;
-    html = html.replace(/<\/body>/i, \`\${injection}</body>\`);
+
+    html = html.replace(/<\/body>/i, `${injection}</body>`);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.setHeader("Access-Control-Allow-Origin", "*");
