@@ -1,9 +1,9 @@
 export default async function handler(req, res) {
   try {
     const mirrors = [
-      "https://vidsrc-embed.ru",
-      "https://vidsrc-embed.su",
-      "https://vidapi.xyz",
+      "https://vidsrcme.ru/",
+      "https://vidsrcme.ru/",
+      "https://vidsrcme.ru/",
     ];
 
     const path = req.url.replace(/^\/api\/proxy\//, "");
