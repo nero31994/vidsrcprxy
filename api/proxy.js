@@ -4,13 +4,12 @@ export default async function handler(req, res) {
   try {
     const path = req.url.replace(/^\/api\/proxy\//, "") || "";
 
-    // Rotating mirrors
+    // Rotate mirrors
     const mirrors = [
       "https://vidsrc-embed.ru",
       "https://vidsrc-embed.su",
       "https://vidapi.xyz"
     ];
-
     const mirror = mirrors[currentMirrorIndex];
     currentMirrorIndex = (currentMirrorIndex + 1) % mirrors.length;
 
@@ -35,63 +34,64 @@ export default async function handler(req, res) {
 
     let html = await upstream.text();
 
-    // Inject strong adblock + auto-restore player logic
+    // Inject Anti-Ad + Safe Lock Logic
     const injection = `
       <script>
         (() => {
           const blocked = /intent:|market:|histats|sponsor|pop|redirect/i;
 
-          // 🧩 Prevent popup and intent redirects
+          // 🚫 Block popup & intent ads
           window.open = () => null;
           document.addEventListener('click', e => {
             const t = e.target.closest('a,button');
             if (t && t.href && blocked.test(t.href)) {
-              e.preventDefault(); e.stopImmediatePropagation();
+              e.preventDefault();
+              e.stopImmediatePropagation();
               console.log('🚫 Blocked redirect:', t.href);
             }
           }, true);
 
+          // 🧩 Safe tap lock (prevents ad click redirect)
+          document.addEventListener('click', e => {
+            const player = document.querySelector('iframe, video, #player, .player');
+            if (player && player.contains(e.target)) {
+              e.preventDefault();
+              e.stopImmediatePropagation();
+              console.log('✅ Safe tap on player — no redirect.');
+              try {
+                if (player.tagName === 'VIDEO') {
+                  if (player.paused) player.play();
+                  else player.pause();
+                }
+              } catch {}
+            }
+          }, true);
+
           // 🧠 Block dynamically inserted intent links
-          new MutationObserver(mutations => {
-            mutations.forEach(m => m.addedNodes.forEach(n => {
+          new MutationObserver(muts => muts.forEach(m =>
+            m.addedNodes.forEach(n => {
               if (n.nodeType === 1) {
                 const links = n.querySelectorAll('a[href]');
                 links.forEach(a => {
                   if (blocked.test(a.href)) a.removeAttribute('href');
                 });
               }
-            }));
-          }).observe(document.documentElement, { childList: true, subtree: true });
+            })
+          )).observe(document.documentElement, { childList: true, subtree: true });
 
-          // 🧩 Keep the player fixed and restore if replaced by ads
+          // 🎥 Keep fullscreen player & restore if replaced
           const restorePlayer = () => {
-            const validSelectors = ['iframe', 'video', '#player', '.player'];
-            let player = document.querySelector(validSelectors.join(','));
-            if (!player) {
-              console.log('🎥 Player missing — restoring...');
-              // Try to find any old iframe (if replaced)
-              const iframes = document.querySelectorAll('iframe');
-              for (const frame of iframes) {
-                if (!blocked.test(frame.src)) {
-                  frame.style = 'width:100vw;height:100vh;position:fixed;top:0;left:0;z-index:9999;border:none;';
-                  document.body.innerHTML = '';
-                  document.body.appendChild(frame);
-                  return;
-                }
-              }
-            } else {
-              Object.assign(player.style, {
-                width: '100vw',
-                height: '100vh',
-                position: 'fixed',
-                top: '0',
-                left: '0',
-                zIndex: '9999'
-              });
-            }
+            const selectors = ['iframe', 'video', '#player', '.player'];
+            const p = document.querySelector(selectors.join(','));
+            if (p) Object.assign(p.style, {
+              width: '100vw',
+              height: '100vh',
+              position: 'fixed',
+              top: '0',
+              left: '0',
+              zIndex: '9999'
+            });
           };
-
-          // 🔄 Observe and auto-restore
           new MutationObserver(() => restorePlayer())
             .observe(document.body, { childList: true, subtree: true });
           window.addEventListener('load', restorePlayer);
@@ -110,23 +110,25 @@ export default async function handler(req, res) {
                     return Reflect.apply(t, thisArg, args);
                   }
                 });
-              } catch (e) {}
+              } catch {}
             });
           };
           stopRedirects();
         })();
       </script>
+
       <style>
         html,body {
           margin:0; padding:0; background:#000; overflow:hidden; height:100vh;
         }
         iframe, video, #player, .player {
-          width:100vw !important; height:100vh !important;
-          border:none !important; display:block !important;
+          width:100vw !important;
+          height:100vh !important;
+          border:none !important;
+          display:block !important;
         }
       </style>
     `;
-
     html = html.replace(/<\/body>/i, `${injection}</body>`);
 
     res.setHeader("Content-Type", "text/html; charset=utf-8");
