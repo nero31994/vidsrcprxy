@@ -1,135 +1,59 @@
+// /api/proxy.js
+
 export default async function handler(req, res) {
   try {
-    const mirrors = [
-      "https://vidsrc-embed.ru",
-      "https://vidsrc-embed.su",
-      "https://vidapi.xyz",
-    ];
+    const urlPath = req.url.replace(/^\/api\/proxy\//, "");
+    if (!urlPath) return res.status(400).send("No path specified.");
 
-    const path = req.url.replace(/^\/api\/proxy\//, "");
-    const target = mirrors[Math.floor(Math.random() * mirrors.length)] + "/" + path;
+    const targetUrl = decodeURIComponent(urlPath);
+    console.log("Fetching:", targetUrl);
 
-    const upstream = await fetch(target, {
+    // Fetch the original embed HTML
+    const upstream = await fetch(targetUrl, {
       headers: {
         "User-Agent": req.headers["user-agent"] || "Mozilla/5.0",
-        "Referer": "https://vidsrc-embed.ru/",
+        "Referer": "https://vidsrc.me/",
       },
     });
 
     let html = await upstream.text();
 
-    // 🧹 Remove popups & ad scripts
-    html = html
-      .replace(/<script[^>]*histats[^>]*<\/script>/gi, "")
-      .replace(/<script[^>]*popunder[^>]*<\/script>/gi, "")
-      .replace(/<script[^>]*ads[^>]*<\/script>/gi, "")
-      .replace(/window\.open\s*\(/gi, "//blocked(")
-      .replace(/on(click|mousedown|mouseup)="[^"]*"/gi, "")
-      .replace(/location\.href\s*=/gi, "//blockedHref=")
-      .replace(/intent:\/\//gi, "#safe://");
+    // --- 🧹 CLEAN AD SCRIPTS ---
+    // Remove base64 ad injections
+    html = html.replace(/eval\(atob\([^)]+\)\);?/g, "");
+    html = html.replace(/window\.open\s*\([^)]*\)/g, "");
+    html = html.replace(/onclick="[^"]*"/g, "");
+    html = html.replace(/onfocus="[^"]*"/g, "");
+    html = html.replace(/<script[^>]*>([\s\S]*?)<\/script>/gi, (match, script) => {
+      if (
+        /ads|popunder|adblock|banners|base64|window\.open|intent:/.test(script)
+      ) return "";
+      return match;
+    });
 
-    // 🎬 Player fullscreen & autoplay styles
-    const playerCSS = `
-      <style>
-        html, body {
-          margin: 0 !important;
-          padding: 0 !important;
-          background: #000 !important;
-          height: 100% !important;
-          width: 100% !important;
-          overflow: hidden !important;
-        }
-        iframe, video, #player, .video-js, .jwplayer, .plyr {
-          width: 100% !important;
-          height: 100% !important;
-          max-width: 100vw !important;
-          max-height: 100vh !important;
-          position: fixed !important;
-          top: 0 !important;
-          left: 0 !important;
-          object-fit: cover !important;
-          z-index: 10 !important;
-        }
-      </style>
-    `;
+    // Force autoplay & mute to avoid user tap = ad trigger
+    html = html.replace(
+      /<video([^>]*)>/,
+      '<video$1 autoplay muted playsinline controls>'
+    );
 
-    // 🛡 SafeLock + Autoplay script
-    const safeLock = `
-      <style>
-        #safeLock {
-          position: fixed;
-          inset: 0;
-          background: rgba(0, 0, 0, 0.25);
-          z-index: 9999;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          text-align: center;
-          color: #fff;
-          font-family: system-ui, sans-serif;
-          font-size: 16px;
-          backdrop-filter: blur(4px);
-          transition: opacity 1s ease;
-        }
-        #safeLock.hidden {
-          opacity: 0;
-          pointer-events: none;
-        }
-        #safeLock span {
-          background: rgba(0,0,0,0.6);
-          padding: 12px 20px;
-          border-radius: 10px;
-          box-shadow: 0 0 20px rgba(255,255,255,0.1);
-        }
-      </style>
-      <script>
-        const safeLock = document.createElement('div');
-        safeLock.id = 'safeLock';
-        safeLock.innerHTML = '<span>⚠️ Do not tap screen Ads will appear autoplay mode on — please wait...</span>';
-        document.body.appendChild(safeLock);
+    // Disable JS redirections
+    html = html.replace(/top\.location\s*=/g, "//blocked//");
 
-        // Auto-hide SafeLock
-        let tapCount = 0;
-        safeLock.addEventListener('click', () => {
-          tapCount++;
-          if (tapCount >= 2) safeLock.classList.add('hidden');
-        });
-
-        const enableAutoplay = () => {
-          const vid = document.querySelector('video');
-          const iframe = document.querySelector('iframe');
-
-          // Try autoplay for video
-          if (vid) {
-            vid.muted = true;
-            vid.autoplay = true;
-            vid.play().catch(()=>{});
-            setTimeout(() => safeLock.classList.add('hidden'), 3000);
-          }
-
-          // Force iframe autoplay (append ?autoplay=1)
-          if (iframe && !iframe.src.includes("autoplay")) {
-            try {
-              const url = new URL(iframe.src);
-              url.searchParams.set("autoplay", "1");
-              iframe.src = url.toString();
-            } catch(e){}
-            setTimeout(() => safeLock.classList.add('hidden'), 5000);
-          }
-        };
-
-        window.addEventListener('load', enableAutoplay);
-        new MutationObserver(enableAutoplay).observe(document.body, { childList: true, subtree: true });
-      </script>
-    `;
-
-    html = html.replace("</head>", playerCSS + "</head>");
-    html = html.replace("</body>", safeLock + "</body>");
+    // Optional: inject overlay reminder
+    const reminder = `
+      <div style="position:fixed;bottom:10px;left:50%;transform:translateX(-50%);
+        background:rgba(0,0,0,0.7);color:#fff;padding:6px 12px;border-radius:8px;
+        font-family:sans-serif;font-size:13px;z-index:9999;">
+        Reminder: Ads were removed. Please don't tap the player.
+      </div>`;
+    html = html.replace("</body>", `${reminder}</body>`);
 
     res.setHeader("Content-Type", "text/html");
-    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Cache-Control", "no-store");
     res.status(200).send(html);
-  } catch (err) {
-    res.status(500).json({ error: "Proxy failed", details: err.message });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Proxy failed.", details: e.message });
   }
 }
